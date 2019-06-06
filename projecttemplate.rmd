@@ -1,0 +1,966 @@
+---
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+Exploration of Physical Activity Data by Nivedita Bijlani
+========================================================
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, packages}
+
+#install.packages("corrplot")
+library(aplore3)
+library(ggplot2)
+library(gridExtra)
+library(corrplot)
+library(dplyr)
+library(tidyr)
+library(RColorBrewer)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Load_the_Data}
+# Load the Data
+data(nhanes)
+```
+
+This report explores the physical activity data obtained from the National Health and Nutrition Examination Survey (NHANES) 2013. NHANES is a program of studies designed to assess the health and nutritional status of adults and children in the United States. This data set is included in the "aplore3" R package. The data dictionary is also included as a separate Word file for reference.
+
+# Univariate Plots Section
+
+The structure of the data set is described in the accompanying Word file. Let us begin by getting an intuition of our data set, exploring the structure and data summary for each variable.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, str}
+str(nhanes)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, summary}
+summary(nhanes)
+```
+
+We notice above that there is some missing data, most notably for Marital Status, Total Cholestrol, Systolic Blood Pressure and Diastolic Blood Pressure. To minimise speculation during analysis and to focus primarily on EDA rather than data pre-processing here,  I will consider only complete records. 
+
+We will also ignore these these columns:
+
+(1) id - The person identifier in the survey
+(2) psu - The primary sampling unit
+(3) strata - Related to psu and provides geographical and population identification.
+(4) samplewt - According to NHANES survey design notes, the sample weight is the "number of people in the population represented by that sample person in NHANES, reflecting the unequal probability of selection, nonresponse adjustment, and adjustment to independent population controls"
+
+Verify the trimmed-down data set has no missing data and review summary.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+activitydf <- nhanes[complete.cases(nhanes),]
+activitydf$id <- NULL
+activitydf$psu <- NULL
+activitydf$strata <- NULL
+activitydf$samplewt <- NULL
+str(activitydf)
+summary(activitydf)
+```
+
+A few things become clear at first sight: 
+
+(1) There are almost equal numbers of males and females in the data.
+(2) Just over half of the respondents are married, about 17% were never married, and a little over 10% are divorced. 
+(3) Strikingly, looking at the third quartile for BMI and knowing that people with a BMI over 35 are classed obese, we see that at least three-quarters of the respondents have a BMI below 35. This is confirmed by the values for "obese" which shows that approximately 85% respondents are not obese. Going forward, we may separate out the obese from non-obese individuals for further analysis. 
+(4) Over 80% people are engaged in at least moderate work activity. 
+(5) Likewise, looking at the 3rd quartile figures for hdl and total cholestrol and comparing these to healthy levels, it is evident that the data set here consists of predominantly non-obese individuals.
+
+In order to remove redundancy, I'd like to analyse vigorous/moderate/no work activity as a single variable "workpattern" and similarly, vigorous/moderate/no recreational activity using a single variable "recrpattern". Create these two new variables, and remove redundant variables. Then, revisit summary.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+activitydf$workpattern <- ifelse(activitydf$vigwrk == "Yes", "Vigorous",
+                                 ifelse(activitydf$modwrk == "Yes", "Moderate",
+                                        "None")
+)
+activitydf$workpattern <- factor(activitydf$workpattern)
+
+activitydf$recrpattern <- ifelse(activitydf$vigrecexr == "Yes", "Vigorous",
+                                 ifelse(activitydf$modrecexr == "Yes", 
+                                        "Moderate", "None")
+)
+activitydf$recrpattern <- factor(activitydf$recrpattern)
+
+activitydf$vigwrk <- NULL
+activitydf$modwrk <- NULL
+activitydf$vigrecexr <- NULL
+activitydf$modrecexr <- NULL
+
+summary(activitydf)
+                                 
+```
+
+What is the age distribution of subjects?
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(data = activitydf, aes(x = age)) +
+  geom_histogram(binwidth = 2)
+```
+
+There seems to be an inordinately large number of subjects above 78 years of age. Maybe we will separate out this group for bivariate and multivariate analysis.
+
+Now, let us look at the distribution of data by bmi. This is linked to obesity as subjects with bmi > 35 are classified in this data set as obese.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(data = activitydf, aes(x = bmi, color = obese)) +
+  geom_histogram(binwidth = 2) + 
+  scale_x_continuous(seq(13,65,2)) +
+  facet_wrap(~gender)
+```
+
+We see here the BMI for male subjects has a tighter distribution than for female subjects. There is a larger number of obese females.
+
+Let us get a sense of distribution of activity levels by gender.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+g1 <- ggplot(data = activitydf, aes(x = workpattern)) +
+  geom_bar()
+
+g2 <- ggplot(data = activitydf, aes(x = recrpattern)) +
+  geom_bar()
+
+g3 <- ggplot(data = activitydf, aes(x = wlkbik)) +
+  geom_bar()
+
+grid.arrange(g1,g2,g3, ncol=1)
+```
+
+We see above that the vast majority of the subjects surveyed do not participate in moderate or vigorous work activity, recreational activity, walking or biking. A word of caution here, however! Let us not assume that most respondents are not active as these categories are not mutually exclusive! So, let us create a new variable called "active" that will label a subject as inactive if they do not engage in any of the above activities - work, recreational activity or walking/biking.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+activitydf$active <- factor(ifelse(activitydf$workpattern == "None" & 
+                                     activitydf$recrpattern == "None" & 
+                                     activitydf$wlkbik == "No", "No", "Yes"))
+
+summary(activitydf)
+```
+
+We observe above that 73% subjects maintain some kind of activity, a positive finding.
+
+Below we look at the distribution of sedentary activity:
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(data = activitydf, aes(x = as.numeric(as.character(sedmin)))) +
+  geom_histogram(binwidth = 20) +
+  scale_x_continuous(limits = c(0, 840), seq(0, 840, 40))
+  
+```
+
+We notice above that a large number of subjects have lower levels of sedentary activity. We will explore this further in the next section when we break this down by gender and age.   
+
+
+We are looking at a data set of adults (min. age here is 20 years), and we know that a desirable total cholesterol level for adults without heart disease is less than 200 mg/dL. Let us look at the distribution of total cholesterol level for our data set.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = activitydf, aes(x = tchol)) +
+  geom_histogram(binwidth = 2)
+```
+
+The above graphs show us that regardless of gender, approximately half of the population has a total cholestrol level higher than the maximum adult recommended value of 200 mg/dL.
+
+Let us tabulate the HDL-Cholestrol, which is considered "good" or "protective" cholestrol for males and females. 60 mg/dL is considered the minimum value to reduce the risk of heart disease - anything below 40 mg/DL (men) and 50 mg/DL (women) is considered risky. Let us look at a plot that takes 40 mg/DL as the base value for men, and 50 mg/DL for women, and highlights subject counts where hdl is less than this threshold value.
+
+%age of males at risk due to low HDL:
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+riskyhdlMale <- nrow(subset(activitydf, gender == "Male" & hdl < 50))/ 
+  nrow(subset(activitydf, gender == "Male")) * 100
+riskyhdlMale
+
+```
+
+%age of females at risk due to low HDL:
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+riskyhdlFemale <- nrow(subset(activitydf, gender == "Female" & hdl < 40))/ 
+  nrow(subset(activitydf, gender == "Female")) * 100
+riskyhdlFemale
+
+```
+
+We notice from the above that the proportion of men at risk of heart disease due to low HDL is approximately 5 times greater than women.
+
+We will cover blood pressure as part of multivariate analysis, as there is no universal guideline on upper and lower thresholds. These are both, age and gender dependent. 
+
+
+# Univariate Analysis
+
+### What is the structure of your dataset?
+
+There are 6482 observations of 21 variables in the original dataset. Eliminating incomplete records and stripping out identifers and other redundant variables that will not add value here, we finally have a dataset of 4915 observations of 15 variables. There are 6 unordered factor variables (gender, marital status, walking or biking, obese, work pattern and recreational activity pattern) and 9 numeric variables (age, total cholestrol, hdl, systolic blood pressure, diastolic blood pressure, weight, height, bmi and minutes of sedentary activity).
+
+Some immediate observations are: 
+
+(1) There are almost equal numbers of males and females in the dataset.
+(2) Just over half of the respondents are married.
+(3) Approximately 85% respondents are not classified as obese, i.e. their BMI < 35.
+(4) Likewise, looking at the 3rd quartile figures for hdl and total cholestrol and comparing these to healthy levels, it is evident that the data set here consists of predominantly non-obese individuals.
+(5) About 40% of the people surveyed are engaged in at least moderate work activity. About 46% are engaged in at least moderate recreational activity. However, only around a quarter of the subjects walk or bike. Overall, around three-quarters of the respondents are active in some way. 
+(6) There is a higher number of people in the dataset, both male and female, in the 78-81 age range.
+(7) Higher numbers of individuals exhibit low sedentary activity and there is very little difference between male and female subjects here. 
+(8) The proportion of men at risk of heart disease due to low HDL is approximately 5 times greater than women.
+
+### What is/are the main feature(s) of interest in your dataset?
+
+The main feature of interest in the dataset is BMI and obsesity. I would like to explore the factors that correlate to a high bmi. 
+
+### What other features in the dataset do you think will help support your  \
+investigation into your feature(s) of interest?
+
+I imagine that gender, age, HDL, total cholestrol, work pattern, recreational activity pattern,  walking/biking and sedentary activity - all affect bmi. It is important to note though that recommended values for these features will vary with age and gender.   
+
+### Did you create any new variables from existing variables in the dataset?
+
+Yes, I created 2 new variables in order to remove redundancy from pairs of existing variables, and consolidate into single factor variables. So, I combined vigorous/moderate/no work activity as a single factor variable "workpattern" based on given "Yes", "No" responses for the underlying variables. Similarly, I combined vigorous/moderate/no recreational activity using a new factor variable "recrpattern". I then removed the base variables.
+
+I also created a new factor variable called "active". This variable contains a "Yes" if the subject engaged in moderate or vigorous work activity, moderate or vigorous recreational activity, or walking/biking. Otherwise, it is "No".
+
+### Of the features you investigated, were there any unusual distributions? \
+Did you perform any operations on the data to tidy, adjust, or change the form \
+of the data? If so, why did you do this?
+
+I removed incomplete records from the dataset. The age distribution is skewed in that there is a larger proportion of subjects in the age range 78-80, recorded for both genders. I will analyse this group in some more detail in the bivariate and multivariate analyses sections. As explained above, I tidied up the work activity and recreational activity data into single factor variables to consolidate data and remove redundancy. I also created a new "active" variable to record a simple Yes/No based on any activity recorded for the subject.
+
+
+# Bivariate Plots Section
+
+
+Let us first explore correlations between pairs of numeric variables to glean any strong correlations:  
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+activitydf_num <- subset(activitydf, select = c("age", "tchol", "hdl", "sysbp", 
+                                                "dbp", "wt", "ht", "bmi", 
+                                                "sedmin"))
+op <- par(mar=c(6,6,1,1), ps=10)
+COR <- cor(activitydf_num)
+image(x=seq(nrow(COR)), y=seq(ncol(COR)), z=cor(activitydf_num), axes=F, 
+      xlab="", ylab="")
+text(expand.grid(x=seq(dim(COR)[1]), y=seq(dim(COR)[2])), 
+     labels=round(c(COR),2))
+box()
+axis(1, at=seq(nrow(COR)), labels = rownames(COR), las=2)
+axis(2, at=seq(ncol(COR)), labels = colnames(COR), las=1)
+par(op)
+```
+
+We see from the above correlation matrix that the only strong correlations are between ht and bmi, and wt and bmi. This is expected as bmi is calculated as the ratio of ht/wt. There is also a weakly positive correlation of 0.47 between blood pressure and age, which again is not an unusual finding. Another relationship of interest is hdl and bmi.
+
+We now move our focus to including categorical variables. 
+
+How does gender relate to bmi?
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = gender, y = bmi), data = activitydf) +
+  geom_point(alpha = 1/4, position = position_jitter(h = 0), color='blue') +
+  geom_hline(yintercept = 35)
+```
+
+We see from this plot that more females than males are obese, i.e. more females than males have a bmi > 35. We will explore this relationship taking age and activity levels into consideration as part of multivariate analysis.
+
+Is there an interesting relationship between marital status and bmi?
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = marstat, y = bmi), data = activitydf) +
+  geom_boxplot() +
+  geom_hline(yintercept = 35)
+```
+
+The two groups of interest here are clearly subjects who are either Married or were Never Married as they have almost half of their numbers as obese. Again this would vary by age and gender as we will explore later on. Widowed, Divorced but especially Separated subjects have, on average the healthiest range of bmi over all. It could be that these groups are actively pursuing healthy weight levels in order to equip themselves to shoulder responsibilities more independently.
+
+Next, how does work activity and recreational activity patterns relate to bmi? I would expect to see that as these go from moderate to vigorous, bmi values will be low.
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+g1 <- ggplot(aes(x = workpattern, y = bmi), data = activitydf) +
+  geom_boxplot() +
+  geom_hline(yintercept = 35)
+
+g2 <- ggplot(aes(x = recrpattern, y = bmi), data = activitydf) +
+  geom_boxplot() +
+  geom_hline(yintercept = 35)
+
+grid.arrange(g1, g2, nrow = 1)
+```
+
+Here, the variation in bmi with recreational activity confirms our hypothesis that individuals with vigorous activity have generally healthier levels of bmi. However, individuals with vigorous work activity do not, on average, seem to be better off than individuals with moderate work activity. Let us explore these two groups further:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+workact_groups <- group_by(activitydf, workpattern)
+df.by_workact <- summarise(workact_groups,
+          bmi_mean = mean(bmi),
+          bmi_median = median(bmi)
+          )
+df.by_workact <- arrange(df.by_workact, desc(bmi_median))
+head(df.by_workact)
+```
+
+We see above that there is hardly any noticable difference in bmi levels with work activity. In fact, bmi levels for individuals with vigorous work activity is marginally higher. Nevertheless, median levels in all three cases are below the obesity threshold. 
+
+What about the impact of walking or biking on bmi? Again, I would expect these individuals to have lower levels of bmi on average.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = wlkbik, y = bmi), data = activitydf) +
+  geom_boxplot() +
+  geom_hline(yintercept = 35)
+```
+
+This is as expected. And what about sedentary minutes per week?
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = sedmin, y = bmi), data = activitydf) +
+  geom_point() +
+  scale_x_continuous(limits = c(0,900), breaks = seq(0,900,40)) +
+  geom_hline(yintercept = 35)
+```
+
+The above plot reveals some interesting findings: 
+
+(1) Sedentary minutes is not a uniformly continuous variable in this dataset. There are well-defined values for this variable, possibly by design. 
+(2) As expected, subjects with sedentary minutes below 120 minutes per week have healthy levels of bmi. 
+(3) With higher levels of sedentary activity, the bmi levels are highly erratic. While we noticed earlier from the correlation matrix that there was no strong correlation between these two variables, it is unusual to see that for sedentary time above 480 minutes per week, individuals actually have, on average, healthier levels of bmi. This indicates that there are other factors at play, such as work/recreational/walking or biking activity, gender, hdl. 
+
+Let us isolate this group and look at their other parameters:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+activitydf$sedmin <- factor(activitydf$sedmin)
+sedmin_groups <- group_by(activitydf, sedmin)
+df.by_sedmin <- summarise(sedmin_groups,
+          bmi_mean = mean(bmi),
+          bmi_median = median(bmi),
+          n = n()
+          )
+df.by_sedmin <- arrange(df.by_sedmin, desc(sedmin))
+df.by_sedmin
+```
+
+The above plot indicates that the highest levels of bmi are for individuals with sedentary activity = 12 minutes per week. Other groups with lower levels of bmi have also reported wildly varying levels of sedentary activity! However, we see here that groups with varying levels of sedentary activity are oversampled or undersampled. Also, the wide range of sedentary minutes suggests  that these numbers have possibly not been accurately defined and/or reported. Hence there are no clear conclusions to be drawn from the relationship between sedentary minutes per week and bmi.
+
+Are their interesting observations in bmi with age?
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = age, y = bmi), data = activitydf) +
+  geom_point() +
+  scale_x_continuous(limits = c(20,80), breaks = seq(20,80,2)) +
+  geom_hline(yintercept = 35) 
+```
+
+Here, we confirm that majority of the indviduals in the data set have healthy levels of bmi. There are 2 outliers at age 54, and a few more at age 49 and 64.The variation in bmi is smaller with increase in age. 80 year olds in particular have generally excellent levels of bmi. 
+
+Let us consider variation in median bmi with age, ignoring the top 5% of the bmi data.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(aes(x = age, y = bmi), data = activitydf) +
+  scale_x_continuous(limits = c(20,80), breaks = seq(20,80,2)) +
+  scale_y_continuous(limits = c(15,quantile(activitydf$bmi, 0.95)), 
+                     breaks = seq(15,quantile(activitydf$bmi, 0.95),2)) +
+  geom_point(alpha = 1/5, position = position_jitter(h = 0), color='green') + 
+  geom_line(stat = 'summary', fun.y = median) +
+  geom_line(stat = 'summary', fun.y = quantile, fun.args = list(probs = .1), 
+            color = 'black', linetype = 2) + 
+  geom_line(stat = 'summary', fun.y = quantile, fun.args = list(probs = .9), 
+            color = 'black', linetype = 2) + 
+  geom_hline(yintercept = 35)
+```
+
+The above graph shows occasional peaks in median, 10th and 90th quantile bmi with age, but there are no alarming signs here. The highest 90th quantile bmi values occur at age 41 (start of the mid-life crisis!), 48, 64 and 71. At all other ages, individuals display healthy levels of bmi. These findings must again show gender variations which we shall explore in the next section.
+
+
+Are there any findings to be seen for total cholestrol or hdl vs. bmi ?
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+g1  <- ggplot(aes(x = tchol, y = bmi), data = activitydf) +
+  geom_point(alpha = 1/15, position = position_jitter(h = 0), color = 'blue') +
+  geom_hline(yintercept = 35) +
+  geom_smooth(method="lm", color = "red")
+
+g2 <- ggplot(aes(x = hdl, y = bmi), data = activitydf) +
+  geom_point(alpha = 1/15, position = position_jitter(h = 0), color = 'blue') +
+  geom_hline(yintercept = 35) +
+  geom_smooth(method="lm", color = "red")
+
+grid.arrange(g1, g2, ncol = 1)
+```
+
+There is clearly no linear relationship between total cholestrol and bmi. hdl shows a slight downward trend vs. bmi but let us ignore the top 5% of the hdl values and re-plot.
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = hdl, y = bmi), data = activitydf) +
+  geom_point(alpha = 1/5, position = position_jitter(h = 0), color='orange') +  
+  geom_hline(yintercept = 35) +
+  scale_x_continuous(limits = c(15,quantile(activitydf$hdl, 0.95)), 
+                     breaks = seq(15,quantile(activitydf$hdl, 0.95),2)) +
+  scale_y_continuous(limits = c(15,quantile(activitydf$bmi, 0.95)), 
+                     breaks = seq(15,quantile(activitydf$bmi, 0.95),2)) +
+  geom_smooth(method="lm", color = "red")
+  
+```
+
+Here again, we notice a downward trend, indicating that in general, an increase in hdl is a predictor of low bmi. However, regardless of hdl increases, we notice that 95% of our sample here has healthy levels of bmi.
+
+Finally, let us see if we can glean any insights from plotting blood pressure vs. bmi
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+g1  <- ggplot(aes(x = sysbp, y = bmi), data = activitydf) +
+  geom_point() +
+  geom_hline(yintercept = 35) +
+  geom_smooth(method="lm", color = "red")
+
+g2 <- ggplot(aes(x = dbp, y = bmi), data = activitydf) +
+  geom_point() +
+  geom_hline(yintercept = 35) +
+  geom_smooth(method="lm", color = "red")
+
+grid.arrange(g1, g2, ncol = 1)
+```
+
+There is no clear correlation between blood pressure in general vs. bmi. We do notice that there are individuals with normal levels of bp, but worryingly high levels of bmi.
+
+Having examined bmi outcomes vs. other factors in the data set, let us how see activity patterns vary with age. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+breaks = seq(20,81,2)
+
+activitydf$age_cut = cut(activitydf$age, breaks = breaks)
+
+data_cut = activitydf %>%
+  group_by(age_cut, workpattern) %>%
+  summarise (n = n()) %>%
+  mutate(freq = n / sum(n))
+
+g1 <- ggplot(data=data_cut, aes(x = age_cut, y=freq*100, fill=workpattern)) + 
+  geom_bar(stat="identity",position="dodge") + 
+  scale_x_discrete(labels = breaks) +  ylab("Percentage") +xlab("Age")
+
+data_cut <- activitydf %>%
+  group_by(age_cut, recrpattern) %>%
+  summarise (n = n()) %>%
+  mutate(freq = n / sum(n))
+
+g2 <- ggplot(data=data_cut, aes(x = age_cut, y=freq*100, fill=recrpattern)) +
+  geom_bar(stat="identity",position="dodge") + 
+  scale_x_discrete(labels = breaks) +  ylab("Percentage") +xlab("Age")
+
+data_cut <- activitydf %>%
+  group_by(age_cut, wlkbik) %>%
+  summarise (n = n()) %>%
+  mutate(freq = n / sum(n))
+
+g3 <- ggplot(data=data_cut, aes(x = age_cut, y=freq*100, fill=wlkbik)) + 
+  geom_bar(stat="identity",position="dodge") + 
+  scale_x_discrete(labels = breaks) +  ylab("Percentage") +xlab("Age")
+
+grid.arrange(g1, g2, g3, ncol = 1)
+
+```
+
+Here we have plotted the percentage of individuals with different work and recreational activity as well as walking/biking patterns vs. age. We see here that the highest percentage individuals with vigorous work activity falls within the 36-40 age range. Percentage of individuals with neither moderate nor vigorous work activity is at age 78. 80 year olds are generally more active than these individuals! There is a high percentage of individuals with recreational activity at age 80! We also notice that there is a high percentage of individuals with neither moderate or vigorous recreational activity ages 52-78. Perhaps these individuals are too busy with their children, grandchildren and careers. The trends for walking and biking are similar. It is surprising to see an almost equal percentage of 80 year olds that walk or bike vs. those who don't. 
+
+Now, we will examine the correlation between hdl and activity. According to research, moderate exercise 3-4 times a week should raise the HDL which is responsible for a healthy heart. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+activitydf.hdl_by_wrkpattern <- activitydf %>%
+  group_by(workpattern) %>%
+  summarise(hdl_mean = mean(hdl),
+            hdl_median = median(hdl))%>%
+  arrange(workpattern)
+head(activitydf.hdl_by_wrkpattern)
+```
+
+We see above that respondents engaged in vigorous exercise have lower values of hdl as expected. However, there is little discernible difference between respondents with moderate and no work activity. In fact, people who reported neither moderate nor vigorous work activity have healthier hdl levels. This again must be revaluated considering age and gender as further inputs.   
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+activitydf.hdl_by_recrpattern <- activitydf %>%
+  group_by(recrpattern) %>%
+  summarise(hdl_mean = mean(hdl),
+            hdl_median = median(hdl))%>%
+  arrange(recrpattern)
+head(activitydf.hdl_by_recrpattern)
+```
+
+The same finding is gleaned for recreational activity as for work activity and hdl. Here, the difference in hdl for moderate and no recreational activity is more pronounced.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+activitydf.hdl_by_wlkbik <- activitydf %>%
+  group_by(wlkbik) %>%
+  summarise(hdl_mean = mean(hdl),
+            hdl_median = median(hdl))%>%
+  arrange(wlkbik)
+head(activitydf.hdl_by_wlkbik)
+```
+
+For walking and biking, the result is as expected. People who report walking or biking have at least marginally lower hdls on average.
+
+How does blood pressure vary with marital status? Are married people coping with very high blood pressure as a result of added responsibilities?
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+g1 <- ggplot(aes(x = marstat, y = sysbp, group=marstat), data = activitydf) +
+  geom_point() + geom_boxplot()
+  
+g2 <- ggplot(aes(x = marstat, y = dbp, group=marstat), data = activitydf) +
+  geom_point() + geom_boxplot()
+
+grid.arrange(g1, g2)
+
+```
+
+We see from the above plots that widowed individuals have markedly higher systolic blood pressure, and divorced individuals have the highest median diastolic blood pressure but not distinctive enough from individuals with other marital statuses.
+
+Finally, I'm interested to see the activity patterns for people with different marital statuses:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+table(activitydf$marstat, activitydf$workpattern)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+df <- activitydf %>% 
+  group_by(marstat, workpattern) %>% 
+  tally() %>% 
+  complete(workpattern, fill = list(n = 0)) %>% 
+  mutate(percentage = n / sum(n) * 100)
+
+ggplot(df, aes(workpattern, percentage, fill = marstat)) + 
+  geom_bar(stat = 'identity', position = 'dodge') +
+  theme_bw()
+```
+
+Widowed individuals have the worst track record for work activity, while those living together do best compared to all others.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+df <- activitydf %>% 
+  group_by(marstat, recrpattern) %>% 
+  tally() %>% 
+  complete(recrpattern, fill = list(n = 0)) %>% 
+  mutate(percentage = n / sum(n) * 100)
+
+ggplot(df, aes(recrpattern, percentage, fill = marstat)) + 
+  geom_bar(stat = 'identity', position = 'dodge') +
+  theme_bw()
+
+```
+
+The highest percentage of people reporting moderate recreational activity are divorced people, while the highest percentage of people reporting vigorous recreational activity were never married. Once again, widowed people were the worst at vigorous recreational activity.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+df <- activitydf %>% 
+  group_by(marstat, wlkbik) %>% 
+  tally() %>% 
+  complete(wlkbik, fill = list(n = 0)) %>% 
+  mutate(percentage = n / sum(n) * 100)
+
+ggplot(df, aes(wlkbik, percentage, fill = marstat)) + 
+  geom_bar(stat = 'identity', position = 'dodge') +
+  theme_bw()
+
+```
+
+Most people walking or biking were separated, and once again, the worst performers were widowed individuals. It would seem that widowed individuals may not have the time or means to pursue significant amounts of recreational or walking/biking activities. 
+
+
+# Bivariate Analysis
+
+### Talk about some of the relationships you observed in this part of the \
+investigation. How did the feature(s) of interest vary with other features in \
+the dataset?
+
+My main feature of interest here was bmi and its relationship with other attributes. I discovered that: 
+
+(1) More females than males are obese. 
+(2) Widowed, Divorced but especially Separated subjects have, on average the healthiest range of bmi over all. 
+(3) There is hardly any difference in bmi levels with work activity. 
+(4) It is unusual to see that for sedentary time above 480 minutes per week, individuals actually have, on average, healthier levels of bmi. This indicates that there are other factors at play, such as work/recreational/walking or biking activity, gender, hdl. 
+(5) The variation in bmi is smaller with increase in age. 80 year olds in particular have generally excellent levels of bmi. 
+(6) An increase in hdl is a predictor of low bmi.
+
+### Did you observe any interesting relationships between the other features \
+(not the main feature(s) of interest)?
+
+Yes! Here are some interesting findings: 
+
+(1) About half the number of 80 year olds bike or walk, which presumably, is a key reason for their excellent bmi. About half of the 78-80 age group is also engaged in moderate or recreational activity. 
+(2) Widowed individuals have the worst track record for work activity, while those living together do best compared to all other individuals in terms of marital status. 
+(3) Widowed individuals are also worst off in terms of pursuing recreational or walking/biking activities. The highest percentage of people reporting vigorous recreational activity were never married.
+
+### What was the strongest relationship you found?
+
+The strongest relationship of interest was that between hdl and bmi. An increase in hdl is associated with decrease in bmi, comfirming that an increase in this "good cholestrol" indeed helps make sure that bmi levels remain in check which in turn, helps keep a healthy heart. Other expected strong relationships naturally occur between sysbp and age, sysbp and dbp, ht and wt, and hdl and height.
+
+
+# Multivariate Plots Section
+
+We earlier looked at the relationship between bmi and gender and found that females are more likely than males to be obese. Let us investigate this relationship bringing age into the picture.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = age, y = bmi, color=gender), data = activitydf) +
+  scale_x_continuous(limits = c(20,80), breaks = seq(20,80,2)) +
+  geom_line(stat = 'summary', fun.y = median) +
+  geom_hline(yintercept = 35)
+```
+
+To compare this better, we zoom in on ages 20 to 50 and then ages 50 and 80:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = age, y = bmi, color=gender), 
+       data = subset(activitydf, age < 50)) +
+  scale_x_continuous(limits = c(20,50), breaks = seq(20,50,2)) +
+  geom_line(stat = 'summary', fun.y = median) +
+  geom_hline(yintercept = 35)
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = age, y = bmi, color=gender), 
+       data = subset(activitydf, age > 50)) +
+  scale_x_continuous(limits = c(51,80), breaks = seq(51,80,2)) +
+  geom_line(stat = 'summary', fun.y = median) +
+  geom_hline(yintercept = 35)
+
+```
+
+From the graphs above, we see that mainly between ages 25-34 years and 43-45 years, females exhibit lower bmi on average than their male counterparts. However, from age 50 upwards, female bmis are on average, higher by 3 to 5 points than their male counterparts. This variation can be attributed to women bearing children in the earlier years and in later years, getting occupied with child-rearing, house work, hormonal changes with menopause etc., all of which may leave them with increase in weight due to little time to focus on regular exercise. Conversely, we see lower bmi levels in males over all, with the significant exception of the 25-34 age range, where again, it could be explained by their greater focus on career and relatively less on getting regular exercise.  
+
+So how do work activity levels vary with age and gender?
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+breaks = seq(20,81,2)
+
+activitydf$age_cut = cut(activitydf$age, breaks = breaks)
+
+data_cut = subset(activitydf, workpattern == "Moderate" | 
+                    workpattern == "Vigorous") %>%
+  group_by(age_cut, workpattern, gender) %>%
+  summarise (n = n()) %>%
+  mutate(freq = n / sum(n))
+
+g1 <- ggplot(data=subset(data_cut, workpattern == "Moderate"), 
+             aes(x = age_cut, y=freq*100, fill=gender)) + 
+  geom_bar(stat="identity",position="dodge") + 
+  scale_x_discrete(labels = breaks) +  ylab("% Moderate work") +xlab("Age")
+
+g2 <- ggplot(data=subset(data_cut, workpattern == "Vigorous"), 
+             aes(x = age_cut, y=freq*100, fill=gender)) + 
+  geom_bar(stat="identity",position="dodge") + 
+  scale_x_discrete(labels = breaks) +  ylab("% Vigorous work") +xlab("Age")
+
+grid.arrange(g1, g2, ncol = 1)
+
+```
+
+And how about recreational activity?
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+data_cut2 = subset(activitydf, recrpattern == "Moderate" | 
+                     recrpattern == "Vigorous") %>%
+  group_by(age_cut, recrpattern, gender) %>%
+  summarise (n = n()) %>%
+  mutate(freq = n / sum(n))
+
+g3 <- ggplot(data=subset(data_cut2, recrpattern == "Moderate"), 
+             aes(x = age_cut, y=freq*100, fill=gender)) + 
+  geom_bar(stat="identity",position="dodge") + 
+  scale_x_discrete(labels = breaks) +  ylab("% Moderate recreation") +xlab("Age")
+
+g4 <- ggplot(data=subset(data_cut2, recrpattern == "Vigorous"), 
+             aes(x = age_cut, y=freq*100, fill=gender)) + 
+  geom_bar(stat="identity",position="dodge") + 
+  scale_x_discrete(labels = breaks) +  ylab("% Vigorous recreation") +xlab("Age")
+
+grid.arrange(g3, g4, ncol = 1)
+```
+
+
+We see here that males outdo females in vigorous work activity and vigorous recreational activity at every age! The variations in moderate work activity do not follow as clear a pattern. From the ages of 20-32, we see a higher percentage of females engage in moderate work activity than males. This then drops and rises compared to male figures until the end of the graph. From the ages of 20-39, we see a higher percentage of females engage in moderate recreational activity than males.
+
+Let us investigate the variation in median bmi by age, gender, marital status:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+data_cut = activitydf %>%
+  group_by(age, marstat, gender) %>%
+  summarise (bmi = median(bmi))
+
+ggplot(aes(x = age, y = bmi, color=gender), data = data_cut) +
+  scale_x_continuous(limits = c(20,80), breaks = seq(20,80,10)) +
+  facet_wrap(~marstat) +
+  geom_hline(yintercept = 35) +
+  geom_point()
+
+```
+
+Inspecting the above graphs, we notice little variation in bmi by gender for married individuals. This points to the stability in general health for this group - both males and females. For widowed individuals, we see that females at ages 45 and 55 display widly high values of bmi. In fact, past the age of 45, widowed females hover around the obesity threshold mark of 35 and display on average, higher values of bmi than their male counterparts. This could be explained by not just the life-defining event of becoming widowed, but also by changes due to menopause coupled with responsibilities of a single career household and likely teenage children. Divorced individuals also show bmi variation by gender with females overtaking males on average bmi from the age of about 45. The figures for separated individuals show that bmi values for women at every age are slightly higher than males, with the widest variations seen from the age of 45. Figures for people who were never married show high variations in bmi with increase in age, again females with higher values on average. The pattern for people living together shows no clear pattern with age. Males and females show higher and lower bmi alternately. On the whole, this group is mostly comfortably below the bmi threshold with marginally higher values again around the 45 age mark.
+
+The really interesting thing here is that while in the previous section, our scatterplot for Married and Never Married individuals showed large numbers of high value bmi, when we break this down by age and gender and compute median values, the Married group appears most stable in BMI terms, while the Never Married group is also the obesity threshold in general. The main contributors to high bmi values are women, mostly over the age of 45.
+
+Let us take a look at how activity patterns vary with age, gender and marital status and see if there is any particular group that stands out. Let us first look at males:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+data_cut = subset(activitydf) %>%
+  group_by(age, marstat, active, gender) %>%
+  summarise (bmi = median(bmi))
+
+ggplot(aes(x = age, y = bmi, color=active), data = subset(data_cut, 
+                                                          gender == "Male")) +
+  scale_x_continuous(limits = c(20,80), breaks = seq(20,80,10)) +
+  facet_wrap(~marstat) +
+  geom_hline(yintercept = 35) +
+  geom_point()
+
+```
+
+We observe that for married, widowed and divorced males, obese individuals are always those who do not pursue any work, recreational, walking or biking activity. Interestingly, for separated males, we see 3 instances below the age of 50 where bmi values are unhealthy despite them being active.The obesity pattern for males with the marital status "Living Together" does not yield meanigful variations by age or activity levels. 
+
+Let us now look at females:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = age, y = bmi, color=active), data = subset(data_cut, 
+                                                          gender == "Female")) +
+  scale_x_continuous(limits = c(20,80), breaks = seq(20,80,10)) +
+  facet_wrap(~marstat) +
+  geom_hline(yintercept = 35) +
+  geom_point()
+
+```
+
+Here again, we see that for most marital statuses, being active is a good predictor of a healthy bmi, except for separated individuals where there is no predictable variation by age or activity level. 
+
+We therefore understand from the above graphs that individuals who are separated, regardless of gender, age or activity levels, have similar likelihood of being obese or not. There will be more than physiological factors at play here, presumably difficult life situations.  
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = age, y = bmi, color=active), data = subset(data_cut, 
+                                                          gender == "Female")) +
+  scale_x_continuous(limits = c(20,80), breaks = seq(20,80,10)) +
+  facet_wrap(~marstat) +
+  geom_hline(yintercept = 35) +
+  geom_point()
+```
+
+Our next plot charts hdl by age, gender and activity level. A high hdl is responsible for a healthy heart. We noted earlier that as hdl goes up, bmi levels get lower. We also saw that 5 times more females have healthier hdl levels than males  
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = age, y = hdl, color=gender), data = activitydf) +
+  scale_x_continuous(limits = c(20,80), breaks = seq(20,80,10)) +
+  facet_wrap(~workpattern) +
+  geom_line(stat = 'summary', fun.y = median) +
+  geom_smooth()
+```
+
+We see from the above graphs that there is no real predictability in hdl by age for either gender. The least variation is seen where there is no work activity. There is greater variation in hdl by moderate work activity, and maximum variation with vigorous work activity. With the latter, male and female hdl values are also closer on average, indicating that work activity only if vigorous may have some impact on affecting hdl levels. In each case however, we see that, barring one or two exceptions, female hdl levels are markedly higher than their male counterparts at the same age, regardless of work activity levels. The exceptions are only seen around the ages of 40 - 55 which is typically around menopause when the estrogen levels in women fall dramatically, HDL levels decrease and LDL levels increase.  
+
+Do we see any differences with recreational activity patterns?
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = age, y = hdl, color=gender), data = activitydf) +
+  scale_x_continuous(limits = c(20,80), breaks = seq(20,80,10)) +
+  facet_wrap(~recrpattern) +
+  geom_line(stat = 'summary', fun.y = median) +
+  geom_smooth()
+```
+
+The hdl vs.age and gender plot by recreational activity again shows that females on average have higher levels of hdl. With moderate recreational activity levels, values are slightly closer together than with vigorous activity levels. In the latter case, we see wild variations by age in both males and females with male values surpassing female observations from age 65. Vigorous activity therefore may be having an impact, however, in order to quatify the effect, we would need to further break down what it really means to engage in "moderate" or "vigorous" recreational activity.
+
+Let us generalize hdl by age and gender simply by whether or not an individual is active, and see if there is any clear correlation to be made:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = age, y = hdl, color=active), data = activitydf) +
+  scale_x_continuous(limits = c(20,80), breaks = seq(20,80,10)) +
+  facet_wrap(~gender) +
+  geom_line(stat = 'summary', fun.y = median) +
+  geom_smooth()
+```
+
+While the smoother indicates that on average, active individuals have higher hdls than inactive individuals, this finding is most clearly established in females aged 65-75. Wild variations in hdl by age indicates that age, gender and activity are weak predictors of hdl.      
+
+Our final few plots focus on individuals aged 75-80. There are a large number of active individuals in this age range in our data set, so let us get a picture of their health! 
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+senior_cut <- subset(activitydf, age >= 75 & age <= 80)
+
+g1 <- ggplot(aes(x = age, y = bmi, color=workpattern), data = senior_cut) +
+  scale_x_continuous(limits = c(75,80), breaks = seq(75,80,1)) +
+  facet_wrap(~gender) +
+  geom_line(stat = 'summary', fun.y = median) +
+  geom_hline(yintercept = 35)
+
+g2 <- ggplot(aes(x = age, y = bmi, color=recrpattern), data = senior_cut) +
+  scale_x_continuous(limits = c(75,80), breaks = seq(75,80,1)) +
+  facet_wrap(~gender) +
+  geom_line(stat = 'summary', fun.y = median) +
+  geom_hline(yintercept = 35)
+
+g3 <- ggplot(aes(x = age, y = bmi, color=active), data = senior_cut) +
+  scale_x_continuous(limits = c(75,80), breaks = seq(75,80,1)) +
+  facet_wrap(~gender) +
+  geom_line(stat = 'summary', fun.y = median) +
+  geom_hline(yintercept = 35)
+
+grid.arrange(g1, g2, g3, ncol = 1)
+
+```
+
+
+These graphs yield some valuable information: 
+
+(1) Females aged 77 with moderate work activity on average show high levels of bmi, followed closely by those engaged in vigorous levels of work activity. The former group is one of obese females. 
+(2) Males with any work or recreational activity pattern in their senior years have healthy values of bmi. 
+(3) For senior females undertaking vigorous recreational activity, we see that bmi decreases with age. 
+(4) Senior females with any recreational activity pattern have healthy bmi. 
+(5) Taking any activity into consideration though (work, recreation or walking/biking), we see that senior active females retain healthy bmi levels all through this age profile. Also, in general, staying active correlates to a low bmi for this age group as well.      
+
+Finally, let us see how hdl and systolic blood pressure values measure up for senior individuals:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = age, y = hdl, color=gender), data = senior_cut) +
+  scale_x_continuous(limits = c(75,80), breaks = seq(75,80,1)) +
+  geom_line(stat = 'summary', fun.y = median)
+```
+
+Senior males show lower, healthier values of hdl than females, except at age 78.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = age, y = sysbp, color=gender), data = senior_cut) +
+  scale_x_continuous(limits = c(75,80), breaks = seq(75,80,1)) +
+  geom_line(stat = 'summary', fun.y = median)
+```
+
+Females show higher levels of blood pressure from age 75 upwards.
+
+In brief, senior males are on the whole, enjoying healthier hearts than their female counterparts. 
+
+Let us see if a linear model can be built to predict bmi, considering hdl, activity, age and marital status.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+m <- lm(bmi ~ gender + hdl + active + age + marstat, data = activitydf)
+print(m)
+summary(m)
+plot(m)
+```
+
+We see from the above model that gender, hdl, activity and age are the most significant predictors of bmi, followed by marital status. However, the model explains only 10.87 % of the variation in bmi. The residual plot shows a flattish red line (except for low values of bmi) indicating the linear model with the selected variables is a reasonable one. The Q-Q plot confirms this finding except for very low and very large quantiles. The fitted values plot shows a significant number of outliers on either side of 1.0. Finally, the leverage plot shows that there are no influential outliers beyond Cook's distance.
+
+
+# Multivariate Analysis
+
+### Talk about some of the relationships you observed in this part of the \
+investigation. Were there features that strengthened each other in terms of \
+looking at your feature(s) of interest? 
+
+Here are some of the specific findings from performing multivariate analysis: 
+
+(1) Between ages 25-34 years and 43-45 years, females exhibit lower bmi on average than their male counterparts. However, from age 50 upwards, female bmis are on average, higher by 3 to 5 points than their male counterparts. 
+(2) Males outdo females in vigorous work activity and vigorous recreational activity at every age. 
+(3) There is only small variation in bmi by gender for active married individuals. This points to the stability in general health for this group - both males and females. 
+(4) For most marital statuses with the exception of separated individuals, being active is a good predictor of a healthy bmi. (5) Female hdl levels are markedly higher than their male counterparts at the same age, regardless of work activity levels. The exceptions are only seen around the ages of 40 - 55 which is typically around menopause when the estrogen levels in women fall dramatically, HDL levels decrease and LDL levels increase. 
+(6) Senior males (75-80 years of age) are on the whole, enjoying healthier hearts than their female counterparts. 
+(7) Males with any work or recreational activity pattern in their senior years have healthy values of bmi. 
+(8) For senior females undertaking vigorous recreational activity, we see that bmi decreases with age.
+
+
+### Were there any interesting or surprising interactions between features?
+Three interactions come forth: 
+
+(1) Marital status shows an interesting impact on bmi levels. Married people (with and without activity) show stable and lower values of bmi compared to other marital groups. 
+(2) Active individuals show on average, higher levels of hdl, a predictor of a healthy heart. 
+(3) Gender is an important factor in hdl and bmi over all.  
+
+
+### OPTIONAL: Did you create any models with your dataset? Discuss the \
+strengths and limitations of your model.
+
+I created a linear model predicting bmi from five key variables: gender, age, activity, hdl and marital status. All variables were deemed highly significant, marital status being the least of these. The residual plot and the Q-Q plots are a reasonable fit. The limitation here is that with a low value of R-squared, it is evident that there are more factors affecting bmi than are present in this dataset. Another limitation is that the "active" predictor variable is not accurately defined in quantitative terms such as hours or calories expended. One other limitation is that there is oversampling of senior individuals (75- 80 years of age) in this data set.
+
+------
+
+# Final Plots and Summary
+
+### Plot One
+```{r echo=FALSE, message=FALSE, warning=FALSE, Plot_One}
+data_cut = activitydf %>%
+  group_by(age, marstat, gender) %>%
+  summarise (bmi = median(bmi))
+
+ggplot(aes(x = age, y = bmi, color=gender), data = data_cut) +
+  scale_color_brewer(palette = "Set1", guide = guide_legend(title = 'Gender', 
+                                                            reverse = T)) +
+  geom_hline(aes(yintercept= 35, linetype = "Obesity threshold (BMI = 35)"), 
+             color="black") +
+  scale_linetype_manual(name = "Line", values = c(1, 1), 
+                        guide = guide_legend(override.aes = 
+                                               list(color = c("black")))) +
+  geom_point() +
+  scale_x_continuous(limits = c(20,80), breaks = seq(20,80,10)) +
+  facet_wrap(~marstat)+
+  xlab("Age (years)") +
+  ylab("BMI") +
+  ggtitle("Scatterplot of BMI vs. Age (years) by Gender and Marital Status")
+```
+
+### Description One
+
+The above plot shows the variation in BMI by age and gender, broken down by marital status. I chose this plot as it was immediately interesting to see that married individuals, regardless of age, show strongly stable values of BMI across all ages. This graph led me to investigate activity patterns by gender and marital status, but even there, it became evident that for both, males and females, regardless of activity level, married individuals exhibit on average, the healthiest levels of bmi with very few individuals above the obesity threshold. This points to stability in life being one possible contributing factor. Separated individuals, especially females exhibit high median values of bmi.  
+
+### Plot Two
+```{r echo=FALSE, message = FALSE, warning = FALSE, Plot_Two}
+ggplot(aes(x = hdl, y = bmi), data = activitydf) +
+  geom_point(alpha = 1/10, position = position_jitter(h = 0), color='blue') +  
+  geom_hline(aes(yintercept= 35, linetype = "Obesity threshold (BMI = 35)"), 
+             color="black") +
+  geom_vline(aes(xintercept= 45, linetype = "HDL threshold (45 mg/DL)"), 
+             color="black") +
+  scale_linetype_manual(name = "Line", values = c(2, 2), 
+                        guide = guide_legend(override.aes = list(color = 
+                                                                   c("black", 
+                                                                     "black")))) +
+  scale_x_continuous(limits = c(15,quantile(activitydf$hdl, 0.95)), 
+                     breaks = seq(15,quantile(activitydf$hdl, 0.95),3)) +
+  scale_y_continuous(limits = c(15,quantile(activitydf$bmi, 0.95)), 
+                     breaks = seq(15,quantile(activitydf$bmi, 0.95),2)) +
+  geom_smooth(method="lm", color = "red") +
+  xlab("HDL (mg/DL)") +
+  ylab("BMI") +
+  ggtitle("Scatterplot of BMI vs. HDL (mg/DL): 95th quantile")
+```
+
+### Description Two
+
+The simple bivariate plot above shows how BMI varies with HDL levels. It is interesting here to see that with increasing HDL levels, we also see generally low BMI levels. Both HDL and BMI are predictors of a healthy heart. We also see here that, ignoring the top 5% HDL values (i.e. possible outliers), there is a high concentration of individuals with HDL between 33 and 70 mg/DL and majority of these individuals have corresponding BMI below the obesity threshold of 35 and HDL greater than 45 mg/DL (average of lower HDL risk threshold for males and females, 40 and 50 mg/DL respectively). This gives us an indication that the population represented in this data set on average, have healthy hearts.
+
+
+### Plot Three
+```{r echo=FALSE, message=FALSE, warning=FALSE, Plot_Three}
+ggplot(aes(x = age, y = bmi, color=active), data = senior_cut) +
+  scale_color_brewer(palette = "Set1", guide = guide_legend(title = 'Active?', 
+                                                            reverse = T)) +  
+  scale_x_continuous(limits = c(75,80), breaks = seq(75,80,1)) +
+  facet_wrap(~gender) +
+  geom_line(stat = 'summary', fun.y = median) +
+  geom_hline(aes(yintercept= 35, linetype = "Obesity threshold (BMI = 35)"), 
+             color="black") +
+  scale_linetype_manual(name = "Line", values = c(1, 1), guide = 
+                          guide_legend(override.aes = 
+                                         list(color = c("black")))) +
+  xlab("Age (years)") +
+  ylab("BMI") +
+  ggtitle("Scatterplot of BMI vs. Age (years) for Seniors by Gender and 
+          Activity")
+
+```
+
+### Description Three
+I chose this plot to showcase the bmi profile for senior individuals - range 75- 80 years. It is important to isolate this group for analysis due to their high numbers in the data set. A striking finding here is that senior females, regardless of their activity, have safely healthy bmi levels on average. Of course, active individuals do have lower levels of bmi in general than inactive ones. We also see here that on average, 79 year old inactve males represented in this data set are clearly obese. Their active counterparts sit well below the obesity threshold. This visual reminds us that with some activity in our senior years, we can continue to enjoy healthy hearts and lives.  
+
+------
+
+# Reflection
+
+The NHANES data set 2013, after ignoring missing data, consists of 4915 observations of an individual's age, height, weight, activity, marital status and other vital metrics to support the study of their health and nutritional status. My objective with this analysis was to explore how these vital metrics correlate to each other, but especially with bmi, considering bmi as the yardstick of a good heart and health. I began by understanding the distribution of data over the different variables, systematically trying to understand how the various health factors correlate with bmi, factoring by age, gender and activity as the main factors. A bmi of 35 was benchmarked as the obesity threshold, as per the survey design. Also, 45 mg/DL was benchmarked as the HDL threshold (taking the average of 40 mg/DL for males, and 50 mg/DL for females). A new dimension called "active" was created to reflect whether or not an individual engaged in any work, recreation, walking or biking activity. As part of the analysis, I isolated the age group of 75-80 year old individuals as this group is oversampled in the data set, but also shows surprisingly good health metrics in the univariate and bivariate analysis. Finally, I tried to follow a logical approach to correlating variables, with specific observations documented at the foot of each plot or set of plots. 
+
+The over all intuition with this data set is that the majority of individuals represented here have relatively healthy values of BMI and HDL, both of which are predictors of a healthy heart. This trend is surprisingly more pronounced for seniors (ages 75-80 years), and especially for active seniors. Another interesting insight is that married individuals and also to a certain extent, individuals living together regardless of gender and activity levels, have healthier hearts across all ages than their widowed, divorced or separated counterparts. From a gender perspective, females on average, enjoy higher HDL and lower BMI values than their male counterparts, regardless of higher activity levels by male individuals, with the exception of the menopause years, when BMI and HDL show no stable patterns. A linear model predicting bmi based on gender, HDL, activity, age and marital status turned out to be a strong one but accounted for only around 11% of the variance in BMI, indicating of course that there are other factors at play.
+
+Here are some opportunities for further analysis with this data set: 
+
+(1) Dual axis plots could help show the trend of 2 significant variables (such as hdl, activity, bmi etc.) by age for deeper analysis. I struggled with getting this to work. 
+(2) Work activity, recreational activity, walking and biking should be quantified. This could be done in terms of calories expended or simply minutes/hours per week. This way, it would be possible to perform a more granular analysis of variation in bmi with activity. 
+(3) Likewise, sedentary minutes must be more rigorously specified. I found that this variable had not only discrete values (part of survey design, presumably), but also wildly varying values reported, which led me to drop this variable from my analysis. 
+(4) Ethnicity information could also be included so that it can be possible to consider an individual's bill of health in relation to their gene pool. 
+(5) Some nutrition information could also be included, e.g. predominant food groups in diet, vegan, gluten-free etc. that would again allow for deeper analysis. 
+(6) There is also scope here for performing more detailed analysis taking marital status or activity levels or blood pressure as the target variable for analysis. 
+(7) Finally, a robust linear model containing more granular variables could be helpful in predicting bmi, and allow for setting benchmark values for different sub-groups in the data set.

@@ -1,0 +1,12 @@
+References:
+
+1. https://www.cdc.gov/nchs/tutorials/nhanes/surveydesign/sampledesign/info1.htm
+2. https://my.clevelandclinic.org/health/articles/what-do-cholesterol-numbers-mean
+3. https://wwwn.cdc.gov/nchs/nhanes/2011-2012/PAQ_G.htm
+4. https://stackoverflow.com/questions/10680658/how-can-i-create-a-correlation-matrix-in-r
+5. https://stackoverflow.com/questions/31200254/let-ggplot2-histogram-show-classwise-percentages-on-y-axis
+6. https://stackoverflow.com/questions/39628480/plotting-median-of-the-points-in-r-ggplot
+7. https://stackoverflow.com/questions/39288224/r-barplot-of-two-categorical-variables
+8. https://my.clevelandclinic.org/health/articles/estrogen-hormones-heart-health
+9. http://blog.minitab.com/blog/adventures-in-statistics-2/how-to-interpret-a-regression-model-with-low-r-squared-and-low-p-values
+10. https://stackoverflow.com/questions/20057452/aesthetics-must-either-be-length-one-or-the-same-length-as-the-dataproblems
